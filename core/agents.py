@@ -148,8 +148,50 @@ class PesquisadorWeb:
         self.nome = "Web"
 
     def pesquisar(self, pergunta):
-        """Faz uma busca simples na web usando DuckDuckGo HTML (sem API/keys).
-        Retorna um resumo ou None se falhar."""
+        """Busca conhecimento na internet. Tenta Wikipedia por primeiro (API
+        confiavel), e cai para DuckDuckGo se nao achar. Retorna resumo ou None."""
+        res = self._pesquisar_wikipedia(pergunta)
+        if res:
+            return res
+        return self._pesquisar_duckduckgo(pergunta)
+
+    def _pesquisar_wikipedia(self, pergunta):
+        """Wikipedia via API publica (JSON), sem chave. Confiavel."""
+        # remove palavras interrogativas/verbos iniciais para melhorar a busca
+        termo = re.sub(r"^(voce |você |o que |o quê |quem |qual |quais |que |como |onde |quando |porque |me |a |o |e co |e |conhece |sabe |eh |é )+", "", pergunta.lower().strip(), flags=re.IGNORECASE)
+        termo = re.sub(r'[\?\.!,;:]+$', '', termo).strip() or pergunta.strip()
+        busca = urllib.parse.quote_plus(termo)
+        url = ("https://pt.wikipedia.org/w/api.php?action=opensearch&search="
+               + busca + "&limit=5&format=json")
+        try:
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "NeoAI/1.0 (research; contact: local)"})
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = json.loads(r.read().decode("utf-8", "ignore"))
+        except Exception:
+            return None
+        titulos = data[1]
+        if not titulos:
+            return None
+        # testa cada artigo candidato ate achar um resumo util
+        for titulo in titulos:
+            try:
+                surl = ("https://pt.wikipedia.org/api/rest_v1/page/summary/"
+                        + urllib.parse.quote(titulo))
+                req2 = urllib.request.Request(surl, headers={
+                    "User-Agent": "NeoAI/1.0 (research; contact: local)"})
+                with urllib.request.urlopen(req2, timeout=15) as r2:
+                    d = json.loads(r2.read().decode("utf-8", "ignore"))
+                resumo = d.get("extract") or ""
+                tipo = d.get("type", "")
+                if resumo and resumo not in ("Rascunho de página.", "") and tipo != "disambiguation":
+                    return "[Web] Sobre '{}' ({}):\n{}".format(
+                        pergunta, titulo, resumo.strip()[:500])
+            except Exception:
+                continue
+        return None
+
+    def _pesquisar_duckduckgo(self, pergunta):
         try:
             query = urllib.parse.quote_plus(pergunta)
             url = "https://html.duckduckgo.com/html/?q=" + query
@@ -192,7 +234,7 @@ class EquipeAgentes:
         ]
         self.web = PesquisadorWeb()
 
-    def pensar(self, pedido):
+    def pensar(self, pedido, pesquisar_web=True):
         """NeoAI pensa antes de decidir: consulta os agentes, troca dúvidas,
         e só então dá a resposta certa. Retorna um resumo do raciocínio."""
         pensamento = []
@@ -226,16 +268,19 @@ class EquipeAgentes:
                         acertos.append((a.nome, r, c))
                         break
 
-        # 3) Se ninguém souber -> pesquisa web
-        if not acertos:
+        # 3) Se ninguém souber -> pesquisa web (opcional)
+        if not acertos and pesquisar_web:
             pensamento.append("  [Pesquisa] Nenhum agente soube. Pesquisando na internet...")
             web_res = self.web.pesquisar(pedido)
             if web_res:
                 acertos.append(("Web", web_res, 0.7))
                 pensamento.append("  Web retornou resultados.")
-                self._salvar_na_memoria(pedido, web_res)
+                # NAO salva automaticamente na memoria para nao poluir com
+                # resumos ruins da web. O usuario pode guardar com 'lembre-se'.
             else:
                 pensamento.append("  [Falha] Nem a internet respondeu (offline?).")
+        elif not acertos:
+            pensamento.append("  [Sem web] Nenhum agente soube (busca web desativada nesta etapa).")
 
         # 4) Escolhe a melhor resposta
         melhor = max(acertos, key=lambda x: x[2]) if acertos else None

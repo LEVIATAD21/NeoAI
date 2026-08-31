@@ -83,6 +83,18 @@ class Planejador:
         limpo = re.sub(r"^(neoa|e ai|oia|hey|por favor|pfv|vai|pode|pode me|me)\s+",
                        "", texto)
 
+        # --- abrir app do Android / programa ---
+        m = re.search(r"(abr[a-z]+|execut[a-z]+|roda?|inicia?|open)\s+(?:meu |me |o |a )?(.+)",
+                      limpo)
+        if m:
+            alvo = m.group(2).strip().strip(" ,;:.!?")
+            nome_app = re.sub(r"^(meu|me)\s+", "", alvo.lower())
+            app = self.executor.encontrar_app(nome_app)
+            if app:
+                return [{"comando": "APP::" + nome_app,
+                         "explicacao": "Abrir o aplicativo " + app["nome"],
+                         "seguro": False}], app["pkg"]
+
         # --- abrir arquivo / programa / rodar script ---
         m = re.search(r"(abr[a-z]+|open|execut[a-z]+|roda?|run)\s+(?:o |a |arquivo |programa )?(?:script\s+)?([\w.\-/ ]+)",
                       limpo)

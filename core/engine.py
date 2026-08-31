@@ -265,9 +265,11 @@ class NeoEngine:
         if any(g in t for g in ("que horas", "hora atual", "data de hoje",
                                 "dia de hoje", "que dia")):
             return Intencao.TEMPO
-        if any(g in t for g in ("sistema", "so", "plataforma", "termux",
+        if any(g in t for g in ("sistema", "sobre o sistema",
+                                "sistema operacional", "plataforma",
                                 "qual dispositivo", "onde estou",
-                                "qual o sistema")):
+                                "qual o sistema", "info do sistema",
+                                "informacoes do sistema")):
             return Intencao.SISTEMA
         if any(g in t for g in ("lembra de", "voce lembra", "o que sei sobre",
                                 "o que voce sabe sobre", "me fala sobre")):
@@ -277,6 +279,11 @@ class NeoEngine:
             return Intencao.COMPARAR
 
         # EXECUTAR: pedidos imperativos de ação no dispositivo
+        # detecta abertura de apps do Android (ex: 'abre meu zap', 'roda o whatsapp')
+        m_abre = re.match(r"^(abra|abre|roda|inicia|executa|execute)\s+(meu|me|o|a)\s+(\S+)",
+                          t)
+        if m_abre and self.executor.encontrar_app(m_abre.group(3)):
+            return Intencao.EXECUTAR
         if any(g in t for g in ("lista as pastas", "liste as pastas",
                                 "listar as pastas", "o que tem aqui",
                                 "o que tem nessa pasta", "mostra os arquivos",
@@ -387,8 +394,9 @@ class NeoEngine:
         """NeoAI pensa antes de agir: consulta os 3 agentes, troca duvidas
         e decide a melhor forma de executar. Retorna lista de linhas."""
         linhas = ["[Pensando] NeoAI reflete antes de executar: '{}'...".format(texto)]
-        # Consulta o time de agentes (Pratica/Conhecimento/Memoria)
-        pensamento, resposta = self.equipe.pensar(texto)
+        # Consulta o time de agentes (sem pesquisa web para ser rapido e nao
+        # depender de internet ao executar)
+        pensamento, resposta = self.equipe.pensar(texto, pesquisar_web=False)
         linhas.append(pensamento)
         # Melhora a decisao de execucao se o agente der uma dica pratica
         if resposta:
@@ -423,6 +431,16 @@ class NeoEngine:
             # confirmação: sempre pede antes de executar
             if not self._aprovar_comando(comando, explicacao, seguro):
                 respostas.append("  -> Passo {} negado pelo usuario. Nada executado.".format(i))
+                todos_ok = False
+                break
+
+            # caso especial: abrir app do Android
+            if comando.startswith("APP::"):
+                resultado = self.executor.abrir_app(comando[5:])
+                if resultado:
+                    respostas.append("  " + resultado)
+                    continue
+                respostas.append("  -> nao consegui abrir o app (so Termux/Android).")
                 todos_ok = False
                 break
 

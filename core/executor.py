@@ -5,6 +5,7 @@ Classifica cada comando como 'seguro' (leitura) ou 'perigoso' (escrita/efeito)
 para que o fluxo de confirmação decida.
 """
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -96,3 +97,96 @@ class Executor:
                        'cd', 'pwd', 'whoami', 'id', 'uname', 'date']
             return {"sistema": "Termux (Android)", "comandos": lista_t}
         return {"sistema": "Linux", "comandos": lista}
+
+    # ---------------------- apps Android (via Termux, sem root) ----------------------
+
+    APPS_ANDROID = {
+        "whatsapp": {"nome": "WhatsApp", "pkg": "com.whatsapp",
+                     "activity": "com.whatsapp.Main"},
+        "zap": {"nome": "WhatsApp", "pkg": "com.whatsapp",
+                "activity": "com.whatsapp.Main"},
+        "zapzap": {"nome": "WhatsApp", "pkg": "com.whatsapp",
+                   "activity": "com.whatsapp.Main"},
+        "instagram": {"nome": "Instagram", "pkg": "com.instagram.android",
+                      "activity": "com.instagram.mainactivity.MainActivity"},
+        "insta": {"nome": "Instagram", "pkg": "com.instagram.android",
+                  "activity": "com.instagram.mainactivity.MainActivity"},
+        "telegram": {"nome": "Telegram", "pkg": "org.telegram.messenger",
+                     "activity": "org.telegram.ui.LaunchActivity"},
+        "youtube": {"nome": "YouTube", "pkg": "com.google.android.youtube",
+                    "activity": "com.google.android.apps.youtube.app.WatchWhileActivity"},
+        "yt": {"nome": "YouTube", "pkg": "com.google.android.youtube",
+               "activity": "com.google.android.apps.youtube.app.WatchWhileActivity"},
+        "chrome": {"nome": "Chrome", "pkg": "com.android.chrome",
+                   "activity": "com.google.android.apps.chrome.Main"},
+        "galeria": {"nome": "Galeria", "pkg": "com.google.android.apps.photos",
+                    "activity": "com.google.android.apps.photos.home.HomeActivity"},
+        "fotos": {"nome": "Galeria", "pkg": "com.google.android.apps.photos",
+                  "activity": "com.google.android.apps.photos.home.HomeActivity"},
+        "spotify": {"nome": "Spotify", "pkg": "com.spotify.music",
+                    "activity": "com.spotify.music.MainActivity"},
+        "maps": {"nome": "Google Maps", "pkg": "com.google.android.apps.maps",
+                 "activity": "com.google.android.maps.MapsActivity"},
+        "maps": {"nome": "Google Maps", "pkg": "com.google.android.apps.maps",
+                 "activity": "com.google.android.maps.MapsActivity"},
+        "calculadora": {"nome": "Calculadora", "pkg": "com.google.android.calculator",
+                        "activity": "com.google.android.calculator.Calculator"},
+        "relogio": {"nome": "Relogio", "pkg": "com.google.android.deskclock",
+                    "activity": "com.android.deskclock.DeskClock"},
+        "camera": {"nome": "Camera", "pkg": "com.android.camera2",
+                   "activity": "com.android.camera.CameraActivity"},
+        "jogos": {"nome": "Play Store", "pkg": "com.android.vending",
+                  "activity": "com.android.vending.AssetBrowserActivity"},
+        "playstore": {"nome": "Play Store", "pkg": "com.android.vending",
+                      "activity": "com.android.vending.AssetBrowserActivity"},
+        "configuracoes": {"nome": "Configuracoes", "pkg": "com.android.settings",
+                          "activity": "com.android.settings.Settings"},
+        "ajustes": {"nome": "Configuracoes", "pkg": "com.android.settings",
+                    "activity": "com.android.settings.Settings"},
+        "file": {"nome": "Gerenciador de Arquivos",
+                 "pkg": "com.android.documentsui",
+                 "activity": "com.android.documentsui.files.FilesActivity"},
+        "arquivos": {"nome": "Gerenciador de Arquivos",
+                     "pkg": "com.android.documentsui",
+                     "activity": "com.android.documentsui.files.FilesActivity"},
+        "x": {"nome": "X (Twitter)", "pkg": "com.twitter.android",
+              "activity": "com.twitter.android.StartActivity"},
+        "discord": {"nome": "Discord", "pkg": "com.discord",
+                    "activity": "com.discord.app.main.MainActivity"},
+        "email": {"nome": "Gmail", "pkg": "com.google.android.gm",
+                  "activity": "com.google.android.gm.ConversationListActivityGmail"},
+        "gmail": {"nome": "Gmail", "pkg": "com.google.android.gm",
+                  "activity": "com.google.android.gm.ConversationListActivityGmail"},
+    }
+
+    def encontrar_app(self, nome):
+        """Localiza o app pelo nome digitado (sinônimos/abreviações)."""
+        nome = nome.lower().strip()
+        # nome exato (chave ou nome bonito)
+        for chave, info in self.APPS_ANDROID.items():
+            if chave == nome or info["nome"].lower() == nome:
+                return info
+        # busca parcial segura (nome com pelo menos 3 letras para evitar falso
+        # positivo tipo 'x' batendo em 'lixo')
+        nome_base = re.sub(r"[^a-z]+", "", nome)
+        if len(nome_base) >= 3:
+            for chave, info in self.APPS_ANDROID.items():
+                chave_base = re.sub(r"[^a-z]+", "", chave)
+                if len(chave_base) >= 3:
+                    if nome_base in chave_base or chave_base in nome_base:
+                        return info
+        return None
+
+    def abrir_app(self, nome):
+        """Abre um app Android via Termux (am start). Requer Termux e sem root."""
+        if not self.platform.is_termux:
+            return "Abrir apps do celular so funciona no Termux (Android)."
+        info = self.encontrar_app(nome)
+        if not info:
+            return None
+        comando = "am start -n {}/{}".format(info["pkg"], info["activity"])
+        codigo, stdout, stderr = self.executar(comando)
+        if codigo == 0:
+            return "Abrindo {}...".format(info["nome"])
+        return "App {} nao encontrado/nao instalado. ({}: {})".format(
+            info["nome"], stderr.strip(), stdout.strip())
