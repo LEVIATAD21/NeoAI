@@ -87,6 +87,9 @@ uma escolha de arquitetura (privacidade, tamanho, auditabilidade, zero custo).
 - Escreve `neobrain.json`, notas `.md`, indice, e migra dados do Downloads
   quando Obsidian e detectado.
 - Estruturado por: memorias {chave: dados}, fatos [], conversas [], planos {}.
+- **Grafo de conhecimento**: notas com frontmatter YAML (titulo, tags, criado/
+  atualizado, links `[[...]]`), indice `NeoAI - Grafo de Conhecimento.md`,
+  `grafo.json` (nos/arestas) e busca local por TF-IDF.
 
 ### 2.8 `core/security.py` - criptografia e auditoria
 - Derivacao de chave por PBKDF2 caseiro (hash em iteracoes) + salt.
@@ -120,9 +123,9 @@ uma escolha de arquitetura (privacidade, tamanho, auditabilidade, zero custo).
 
 - [x] **Controle remoto notebook <-> celular** (hub HTTP com token + painel + takeover)
 - [x] **Mapeamento do aparelho** (apps, pastas, sites) com rotas aprendidas
-- [ ] **Memoria Obsidian conectada**: notas com YAML frontmatter, tags, links
-      `[[...]]` bidirecionais e indice de backlinks (grafo de conhecimento).
-- [ ] **Busca semantica local**: TF-IDF + indice invertido dos .md do vault.
+- [x] **Memoria Obsidian conectada**: notas com YAML frontmatter, tags, links
+      `[[...]]` bidirecionais, indice de backlinks e busca local TF-IDF
+      (grafo de conhecimento em `NeoAI - Grafo de Conhecimento.md` + `grafo.json`)
 - [ ] **Raciocinio multi-passada**: pensar -> planejar -> verificar antes de agir.
 - [ ] **Controle mais fino**: perfil de permissao por categoria (leitura,
       escrita, rede, apps) com revogacao.

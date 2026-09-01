@@ -15,6 +15,9 @@ Roda em **Linux, Windows e Termux (Android, sem root)**.
   - Se houver um **vault do Obsidian** (pasta com `.obsidian`) no dispositivo, usa **somente ele**.
   - Caso contrário, usa a **pasta Downloads**.
   - Quando o Obsidian aparece depois, **migra** os dados do Downloads para dentro dele.
+  - **Grafo de conhecimento**: as notas viram frontmatter YAML com tags e links
+    `[[...]]` — abra a aba **Grafos** do Obsidian e veja a memória conectada.
+  - **Busca local**: `busca sobre X` encontra na memória (TF-IDF) o que você já gravou.
 - **Executa funções reais** no dispositivo: lista pastas, abre/executa arquivos,
   roda scripts Python/Shell, instala pacotes, mostra informações do sistema.
 - **Abre apps do Android e sites**: via Termux (`am start`, `termux-open-url`) e
@@ -57,8 +60,10 @@ python3 neoai.py
 | Você digita | O que ela faz |
 |---|---|
 | `oi` / `ola` | Saudação |
-| `lembre-se que ...` | Salva na memória |
+| `lembre-se que ...` | Salva na memória (vira nota no grafo) |
 | `o que você lembra?` | Lista memórias |
+| `busca sobre X` | Busca local na memória/grafo |
+| `grafo` / `backlinks de X` | Grafo de conhecimento / quem referencia X |
 | `esqueça ...` | Apaga memória |
 | `quanto é 5 + 3?` | Calcula (raiz, porcentagem, precedência) |
 | `lista as pastas` | Lista arquivos |

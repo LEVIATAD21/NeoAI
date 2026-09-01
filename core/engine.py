@@ -10,6 +10,7 @@ pré-treinada. Todo o processamento é baseado em regras e algoritmos próprios:
 - Gerador de resposta por composição de templates + memória
 """
 import ast
+import hashlib
 import math
 import os
 import re
@@ -141,6 +142,8 @@ class Intencao:
     REMOTO = "remoto"
     MAPEAR = "mapear"
     SERVIR = "servir"
+    BUSCAR = "buscar"
+    GRAFO = "grafo"
     EXECUTAR = "executar"
     DESCONHECIDO = "desconhecido"
 
@@ -362,6 +365,22 @@ class NeoEngine:
                                 "auto-melhoria", "auto melhorar")):
             return Intencao.SEGURANCA
 
+        # BUSCAR: busca local na memoria/orvalet (grafo)
+        if any(g in t for g in ("busca na memoria", "busca sobre", "busque sobre",
+                                "procura na memoria", "procura sobre",
+                                "pesquisa na memoria", "pesquisar na memoria",
+                                "o que tenho sobre", "onde eu vi",
+                                "encontra na memoria", "procura no vault",
+                                "busca no vault", "acha na memoria",
+                                "tenta achar na memoria")):
+            return Intencao.BUSCAR
+
+        # GRAFO: conhecimento conectado do Obsidian
+        if any(g in t for g in ("grafo", "backlink", "mapa mental",
+                                "conhecimento conectado", "gera o grafo",
+                                "atualiza o grafo")):
+            return Intencao.GRAFO
+
         # REMOTO: controlar/consultar o OUTRO aparelho (notebook <-> celular)
         if any(g in t for g in ("manda pro cel", "manda para o cel",
                                 "envia pro cel", "envia para o cel",
@@ -494,6 +513,10 @@ class NeoEngine:
             return self._seguranca(texto)
         if intencao == Intencao.MAPEAR:
             return self._mapear(texto)
+        if intencao == Intencao.BUSCAR:
+            return self._buscar(texto)
+        if intencao == Intencao.GRAFO:
+            return self._grafo(texto)
         if intencao == Intencao.REMOTO:
             return self._remoto(texto)
         if intencao == Intencao.SERVIR:
@@ -618,6 +641,8 @@ class NeoEngine:
                 "- 'oi', 'ola': saudacao\n"
                 "- 'lembre-se que ...' / 'guarde que ...': salvo na memoria\n"
                 "- 'o que voce lembra?': listo memorias\n"
+                "- 'busca sobre X' / 'o que tenho sobre X': busco na memoria e no grafo\n"
+                "- 'grafo' / 'backlinks': mostro o grafo de conhecimento do Obsidian\n"
                 "- 'esqueça ...' / 'apague ...': apago\n"
                 "- 'exportar': gero backup da memoria\n"
                 "- 'quanto e 5 + 3?': matematicas\n"
@@ -669,7 +694,8 @@ class NeoEngine:
                 break
         chave = "fato"
         if limpo:
-            self.memory.add_memoria(chave + "_" + str(int(time.time())), limpo)
+            chave = "fato_" + hashlib.md5(limpo.encode()).hexdigest()[:8]
+            self.memory.add_memoria(chave, limpo)
             self.memory.add_fato(limpo)
             onde = "no Obsidian" if self.memory.using_obsidian else "na pasta Downloads"
             return "Anotado! Guardei '{}' {}.".format(limpo, onde)
@@ -844,6 +870,45 @@ class NeoEngine:
             self.memory, url.replace("https://", "").replace("http://", ""))
 
     # ---- mapeamento do dispositivo (conhecer de ponta a ponta) ----
+
+    def _buscar(self, texto):
+        # extrai o termo apos marcadores
+        resto = re.sub(r"^(busca|busque|procura|procure|pesquisa|pesquise|"
+                       r"encontra|acha|ache)\s+(na memoria|no vault|sobre|em)"
+                       r"(?: por)?\s*:?\s*", "", texto, flags=re.IGNORECASE)
+        resto = resto.strip(" ?!.,;")
+        if not resto or len(resto) < 2:
+            return ("Sobre o que devo buscar na memoria? "
+                    "Ex: 'busca sobre o que combinamos'.")
+        resultados = self.memory.buscar(resto)
+        if not resultados:
+            return ("Nao encontrei nada na memoria sobre '{}'. "
+                    "E eu ainda posso pesquisar na internet (web).".format(resto))
+        linhas = ["Encontrei na minha memoria (grafo/vault):"]
+        for r in resultados:
+            linhas.append("- **{}** (score {})  \n  {}".format(
+                r["titulo"], r["score"], r["trecho"]))
+        return "\n".join(linhas)
+
+    def _grafo(self, texto):
+        # regenera o grafo para garantir frescor
+        self.memory._atualizar_grafo()
+        nos, arestas = self.memory.info_grafo()
+        refs = None
+        m = re.search(r"backlink[s]?[^:]*?(?:de|para|do)\s+([a-zA-Z][\w .\-]*)",
+                      texto, flags=re.IGNORECASE)
+        if m:
+            refs = self.memory.backlinks(m.group(1).strip())
+        header = ("Grafo de conhecimento atualizado no Obsidian.\n"
+                  "Nos (notas): {} | Arestas (links): {}\n"
+                  "Arquivos: {}\\{}, {}\\{}\nVejas a aba Grafos do Obsidian.".format(
+                      nos, arestas, self.memory.vault_dir,
+                      "NeoAI - Grafo de Conhecimento.md", self.memory.vault_dir,
+                      "grafo.json"))
+        if refs:
+            header += "\nBacklinks de '{}': {}".format(m.group(1).strip(),
+                                                       ", ".join(refs) or "nenhum")
+        return header
 
     def _mapear(self, texto):
         if any(g in texto for g in ("rotas", "aprendeu", "resumo")):
