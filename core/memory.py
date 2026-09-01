@@ -168,6 +168,18 @@ class MemoryStore:
 
     # ---------------------- operações de memória ----------------------
 
+    def get(self, chave):
+        """Le um bloco de dados estruturado do cerebro (ex: rotas)."""
+        brain = self.load_brain()
+        return brain.get("dados", {}).get(chave)
+
+    def set(self, chave, valor):
+        """Grava um bloco de dados estruturado no cerebro e persiste."""
+        brain = self.load_brain()
+        brain.setdefault("dados", {})[chave] = valor
+        self.save_brain(brain)
+        return True
+
     def add_memoria(self, chave, conteudo):
         brain = self.load_brain()
         brain["memorias"][chave] = {

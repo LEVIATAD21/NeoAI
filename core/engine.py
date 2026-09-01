@@ -20,6 +20,8 @@ from core.executor import Executor
 from core.planner import Planejador
 from core.agents import EquipeAgentes
 from core.security import Cofre, auditar_codigo, cifrar, decifrar
+from core import netctrl
+from core import mapper as mapper_mod
 
 
 # ---------------------- normalization / tokenization ----------------------
@@ -136,6 +138,9 @@ class Intencao:
     QUEM_SOU = "quem_sou"
     FALAR = "falar"
     SEGURANCA = "seguranca"
+    REMOTO = "remoto"
+    MAPEAR = "mapear"
+    SERVIR = "servir"
     EXECUTAR = "executar"
     DESCONHECIDO = "desconhecido"
 
@@ -297,6 +302,9 @@ class NeoEngine:
         self.planejador = Planejador(memory, self.executor, platform)
         self.equipe = EquipeAgentes(memory)
         self.cofre = Cofre(memory)
+        self.servidor = None
+        self.modo_remoto = False  # True = comandos remotos so executam o seguro
+        self.takeover = False     # True = mestre assumiu o controle manual
         self.aprovador = None  # callback(comando, explicacao, seguro) -> bool
 
     # ---- intenção ----
@@ -354,11 +362,45 @@ class NeoEngine:
                                 "auto-melhoria", "auto melhorar")):
             return Intencao.SEGURANCA
 
+        # REMOTO: controlar/consultar o OUTRO aparelho (notebook <-> celular)
+        if any(g in t for g in ("manda pro cel", "manda para o cel",
+                                "envia pro cel", "envia para o cel",
+                                "controla meu cel", "mexe no meu cel",
+                                "manda pro notebook", "manda pro pc",
+                                "controla meu notebook", "controla meu pc",
+                                "registra remoto", "adiciona remoto",
+                                "conecta no")):
+            return Intencao.REMOTO
+
+        # SERVIR: abrir o servidor de controle para receber comandos remotos
+        if any(g in t for g in ("servir na porta", "sobe o servidor",
+                                "abrir o servidor", "inicia o servidor",
+                                "modo servidor", "controle remoto ativa",
+                                "ativa o servidor",
+                                "assumir controle", "libera controle",
+                                "liberar controle", "controle automatico")):
+            return Intencao.SERVIR
+
+        # MAPEAR: aprender o dispositivo de ponta a ponta
+        if any(g in t for g in ("conhece meu cel", "conheca meu cel",
+                                "aprende meu cel", "aprende o cel",
+                                "mapeia", "explora o cel", "explore o cel",
+                                "conhece meu dispositivo",
+                                "conhece meu notebook",
+                                "quais rotas", "o que aprendeu",
+                                "resumo das rotas", "conhece o aparelho")):
+            return Intencao.MAPEAR
+
         # EXECUTAR: pedidos imperativos de ação no dispositivo
         # detecta abertura de apps do Android (ex: 'abre meu zap', 'roda o whatsapp')
         m_abre = re.match(r"^(abra|abre|roda|inicia|executa|execute)\s+(meu|me|o|a)\s+(\S+)",
                           t)
         if m_abre and self.executor.encontrar_app(m_abre.group(3)):
+            return Intencao.EXECUTAR
+        # detecta abertura de sites (ex: 'abre o site youtube.com', 'acessa a pagina gmail.com/...')
+        m_site = re.search(r"(abre|abra|acessa|acesse|visita|visite|entra no|entrar no)\s+(?:o |a )?(?:site |url |pagina |link )?([a-zA-Z0-9][a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}(?:/\S*)?)",
+                           t)
+        if m_site and m_site.group(2) and len(m_site.group(2)) >= 4:
             return Intencao.EXECUTAR
         if any(g in t for g in ("lista as pastas", "liste as pastas",
                                 "listar as pastas", "o que tem aqui",
@@ -450,6 +492,12 @@ class NeoEngine:
             return "Me diga o que quer comparar de forma explicita, ex: 'compare A e B'."
         if intencao == Intencao.SEGURANCA:
             return self._seguranca(texto)
+        if intencao == Intencao.MAPEAR:
+            return self._mapear(texto)
+        if intencao == Intencao.REMOTO:
+            return self._remoto(texto)
+        if intencao == Intencao.SERVIR:
+            return self._servir(texto)
         if intencao == Intencao.EXECUTAR:
             return self._lidar_execucao(texto)
         return self._desconhecido(texto)
@@ -461,6 +509,10 @@ class NeoEngine:
         callback de aprovação programática (configurável)."""
         if callable(self.aprovador):
             return self.aprovador(comando, explicacao, seguro)
+        if self.modo_remoto:
+            # comandos recebidos do OUTRO aparelho: so o seguro executa
+            # sozinho; o resto fica para o mestre assumir/liberar.
+            return bool(seguro)
         # padrão: pede confirmação no terminal
         try:
             r = input("Executar: '{}'  ({})? [s/N] ".format(comando, explicacao))
@@ -517,8 +569,20 @@ class NeoEngine:
                 resultado = self.executor.abrir_app(comando[5:])
                 if resultado:
                     respostas.append("  " + resultado)
+                    self._aprender_rota_app(comando[5:], resultado)
                     continue
                 respostas.append("  -> nao consegui abrir o app (so Termux/Android).")
+                todos_ok = False
+                break
+
+            # caso especial: abrir site (aprende a rota para uso futuro)
+            if comando.startswith("SITE::"):
+                resultado = self.executor.abrir_site(comando[6:])
+                if resultado:
+                    respostas.append("  " + resultado)
+                    self._aprender_rota_site(comando[6:])
+                    continue
+                respostas.append("  -> nao consegui abrir esse site.")
                 todos_ok = False
                 break
 
@@ -562,8 +626,19 @@ class NeoEngine:
                 "- 'lista as pastas': listo arquivos\n"
                 "- 'roda o script X.py': executo o script\n"
                 "- 'abre o arquivo X': mostro o arquivo\n"
+                "- 'abre o site X': abro o site no navegador (e aprendo a rota)\n"
+                "- 'abre o whatsapp': abro app do Android (Termux)\n"
                 "- 'instala Y': instalo o pacote\n"
                 "- 'informacoes do sistema': detalhes do hardware\n"
+                "- 'conhece meu celular': aprendo o aparelho de ponta a ponta\n"
+                "- 'quais rotas': mostro o que ja decorei do aparelho\n"
+                "- 'servir na porta 8890': ligo o controle remoto (notebook<->celular)\n"
+                "- 'registra remoto cel 192.168.x.x 8890 token': cadastro o outro aparelho\n"
+                "- 'manda pro cel: <comando>': executo no celular (pelo notebook) e vice-versa\n"
+                "- 'assumir controle' / 'libera controle': voce toma/dá a mão\n"
+                "- 'defina senha mestra X': senha para criptografar credenciais\n"
+                "- 'guarde credencial github <valor>': criptografa e guarda\n"
+                "- 'auditar codigo' / 'auto-melhoria': checo e melhoro meu proprio codigo\n"
                 "- 'tchau': despedida\n"
                 "Obs: memorias vao para o Obsidian (se presente) ou Downloads.\n"
                 "Execucoes pedem sua confirmacao antes de rodar cada passo, e eu\n"
@@ -754,6 +829,111 @@ class NeoEngine:
         return ("Comandos de seguranca: 'defina senha mestra X', "
                 "'guarde credencial github <valor>', 'liste credenciais', "
                 "'revogue credencial github', 'auditar codigo', 'auto-melhoria'.")
+
+    # ---- aprendizado de rotas (memoria permanente) ----
+
+    def _aprender_rota_app(self, nome, resultado):
+        """Decorou a rota do app: guarda para o dia a dia."""
+        info = self.executor.encontrar_app(nome)
+        if info:
+            mapper_mod.registrar_rota_app(self.memory, info["nome"],
+                                          info["pkg"])
+
+    def _aprender_rota_site(self, url):
+        mapper_mod.registrar_rota_site(
+            self.memory, url.replace("https://", "").replace("http://", ""))
+
+    # ---- mapeamento do dispositivo (conhecer de ponta a ponta) ----
+
+    def _mapear(self, texto):
+        if any(g in texto for g in ("rotas", "aprendeu", "resumo")):
+            return mapper_mod.relatorio_rotas(self.memory)
+        achados = mapper_mod.mapear(self.platform, self.memory, self.executor)
+        if not achados:
+            return "Nao consegui mapear nada por aqui. Pode ser dispositivo sem Termux."
+        resumo = "\n".join(" - " + a for a in achados)
+        return ("Mapeei o dispositivo (memoria gravada, inclusive no "
+                "Obsidian).\n" + resumo +
+                "\nAgora eu conheco suas rotas: apps, pastas e sites que "
+                "voce costuma usar. Diga 'quais rotas' para ver.")
+
+    # ---- controle remoto (notebook <-> celular) ----
+
+    def _registrado(self, nome):
+        remotos = self.memory.get("remotos") or {}
+        return remotos.get(nome)
+
+    def _remoto(self, texto):
+        tl = texto.lower()
+
+        # registrar um aparelho
+        m = re.search(r"registra remoto\s+(\S+)\s+(\d{1,3}(?:\.\d{1,3}){3})\s+(\d+)\s+(\S+)",
+                      texto, flags=re.IGNORECASE)
+        if m:
+            nome, ip, porta, token = m.group(1), m.group(2), m.group(3), m.group(4)
+            remotos = self.memory.get("remotos") or {}
+            remotos[nome] = {"ip": ip, "porta": int(porta), "token": token}
+            self.memory.set("remotos", remotos)
+            self.memory.add_fato("Aparelho remoto '{}' registrado (ip {}, porta {}).".format(
+                nome, ip, porta))
+            return ("Registrado! De agora em diante eu sei como falar com "
+                    "'{}' no endereco {}:{}. Diga 'manda pro {}: <comando>'."
+                    .format(nome, ip, porta, nome))
+
+        # descobrir qual aparelho remoto estamos falando
+        alvo = m_nome = None
+        for n in (self.memory.get("remotos") or {}):
+            if n in tl:
+                alvo = self.memory.get("remotos")[n]
+                m_nome = n
+                break
+        if not alvo:
+            return ("Nao conheco esse aparelho ainda. Registre primeiro: "
+                    "'registra remoto cel 192.168.x.x 8890 seu_token'. "
+                    "(depois de ligar o servidor no outro aparelho)")
+
+        # extrair o comando depois da expressao (a partir do nome do aparelho)
+        idx = texto.lower().find(m_nome.lower())
+        if idx < 0:
+            return "Nao entendi para qual aparelho mandar."
+        resto = texto[idx + len(m_nome):].strip(" :,;")
+        comando = resto.strip()
+        if not comando:
+            return "O que devo mandar fazer no '{}'? Ex: 'manda pro {}: abra o whatsapp'.".format(
+                m_nome, m_nome)
+        netctrl.registrar_atividade("Enviando comando para '{}': {}".format(m_nome, comando))
+        try:
+            resultado = netctrl.enviar_comando(alvo["ip"], alvo["porta"],
+                                               alvo["token"], comando)
+            return ("Resposta de '{}':\n{}".format(m_nome, resultado))
+        except Exception as ex:
+            return ("Nao consegui falar com '{}'. Confira se o servidor esta "
+                    "ativo la, o ip/porta/token e a rede (mesmo Wi-Fi). "
+                    "Erro: {}".format(m_nome, ex))
+
+    def _servir(self, texto):
+        tl = texto.lower()
+        if "assumir" in tl or "libera" in tl or "liberar" in tl:
+            if "assumir" in tl:
+                self.takeover = True
+                return ("Voce (mestre) assumiu o controle. Acoes automaticas "
+                        "pausadas ate voce liberar. Para devolver, diga "
+                        "'libera controle'.")
+            self.takeover = False
+            return "Controle liberado. NeoAI pode agir de novo."
+
+        m = re.search(r"(\d{4,5})", tl)
+        porta = int(m.group(1)) if m else 8890
+        if self.servidor:
+            return ("Ja esta servindo na porta {}. Para ver no navegador "
+                    "use o painel (com token). Se quiser porta nova, reinicie:\n"
+                    "- servidor: http://<ip>:{}  | chave do painel: token"
+                    .format(self.servidor.porta, self.servidor.porta))
+        # token: defina um forte via 'defina senha mestra X' ou padrao
+        token = getattr(self.cofre, "senha_mestra", None) or "neoai-mudar"
+        self.servidor = netctrl.ServidorControle(self, porta=porta,
+                                                 host="0.0.0.0", token=token)
+        return self.servidor.iniciar()
 
     def _auto_melhoria(self):
         """Primeira versao de auto-melhoria: auditoria do proprio codigo +

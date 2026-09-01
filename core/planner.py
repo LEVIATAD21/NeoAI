@@ -83,6 +83,18 @@ class Planejador:
         limpo = re.sub(r"^(neoa|e ai|oia|hey|por favor|pfv|vai|pode|pode me|me)\s+",
                        "", texto)
 
+        # --- abrir site (aprende a rota) - ANTES de app para nao confundir ---
+        m = re.search(r"(abr[a-z]+|acess[a-z]+|visita?|entra no|entrar no)\s+(?:o |a )?(?:site |url |pagina |link )?([a-zA-Z0-9][a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}(?:/[^\s,;]*)?)",
+                      limpo)
+        if m:
+            url = m.group(2).strip().strip(" ,;:.!?")
+            if url.lower().endswith((".py", ".sh", ".txt", ".md")):
+                pass
+            else:
+                return [{"comando": "SITE::" + url,
+                         "explicacao": "Abrir o site " + url,
+                         "seguro": False}], url
+
         # --- abrir app do Android / programa ---
         m = re.search(r"(abr[a-z]+|execut[a-z]+|roda?|inicia?|open)\s+(?:meu |me |o |a )?(.+)",
                       limpo)

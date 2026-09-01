@@ -94,8 +94,32 @@ uma escolha de arquitetura (privacidade, tamanho, auditabilidade, zero custo).
 - `Cofre`: credenciais guardadas cifradas (nunca texto puro).
 - Auditoria: varre o codigo em busca de segredos em texto puro.
 
+### 2.9 `core/netctrl.py` - controle remoto entre aparelhos (hub HTTP)
+- Servidor HTTP propio (stdlib `http.server`), com autenticacao por TOKEN:
+  - `POST /cmd`  -> executa comando remoto (so comandos SEGUROS rodam sozinhos)
+  - `POST /takeover` / `POST /release` -> mestre toma/entrega a maozinha
+  - `GET  /status` e `GET /painel` -> painel web (acao em tempo real)
+- Cliente: `enviar_comando(ip, porta, token, texto)` para outro aparelho.
+- Conexao entre notebook e celular: ambos rodam NeoAI na mesma rede Wi-Fi;
+  um expoe a porta (servidor), o outro registra e manda comandos.
+- **Seguranca**: HTTP puro + token forte (use na rede local). NAO e TLS;
+  para expor a internet moderna exigiria VPN/tunel seguro (nao embutido).
+- `modo_remoto`: comandos vindos do outro aparelho so executam leituras;
+  o restante fica para o mestre aprovar localmente.
+- `takeover`: enquanto o mestre estiver na maozinha, coiso automatico pausa
+  (ex: CAPTCHA — voce resolve, clique, e depois libera).
+
+### 2.10 `core/mapper.py` - conhecer o aparelho de ponta a ponta
+- Mapeia apps Android (via `pm list packages` no Termux, sem root), pastas do
+  usuario e informacoes do sistema; grava tudo na memoria (Obsidian/Downloads).
+- Aprende rotas de apps e de sites que o mestre ja mandou abrir
+  (`rotas.apps`, `rotas.sites`, `rotas.pastas` no cerebro).
+- Toda execucao bem-sucedida no dia a dia vira rota reutilizavel.
+
 ## 3. O que vem a seguir (plano de evolucao)
 
+- [x] **Controle remoto notebook <-> celular** (hub HTTP com token + painel + takeover)
+- [x] **Mapeamento do aparelho** (apps, pastas, sites) com rotas aprendidas
 - [ ] **Memoria Obsidian conectada**: notas com YAML frontmatter, tags, links
       `[[...]]` bidirecionais e indice de backlinks (grafo de conhecimento).
 - [ ] **Busca semantica local**: TF-IDF + indice invertido dos .md do vault.

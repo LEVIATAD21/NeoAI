@@ -190,3 +190,19 @@ class Executor:
             return "Abrindo {}...".format(info["nome"])
         return "App {} nao encontrado/nao instalado. ({}: {})".format(
             info["nome"], stderr.strip(), stdout.strip())
+
+    def abrir_site(self, url):
+        """Abre um site no navegador padrao (Termux: termux-open-url; Linux: xdg-open)."""
+        url = url if "://" in url else "https://" + url
+        if self.platform.is_termux and shutil.which("termux-open-url"):
+            comando = "termux-open-url '{}'".format(url.replace("'", "''"))
+        elif not self.platform.is_windows and shutil.which("xdg-open"):
+            comando = "xdg-open '{}'".format(url.replace("'", "''"))
+        elif self.platform.is_windows:
+            comando = "start {}".format(url)
+        else:
+            return None
+        codigo, stdout, stderr = self.executar(comando)
+        if codigo == 0:
+            return "Abrindo o site: " + url
+        return "Nao consegui abrir o site ({})".format(stderr.strip() or stdout.strip())
