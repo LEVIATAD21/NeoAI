@@ -9,7 +9,9 @@ pré-treinada. Todo o processamento é baseado em regras e algoritmos próprios:
 - Sistema de conhecimento e raciocínio baseado em regras
 - Gerador de resposta por composição de templates + memória
 """
+import ast
 import math
+import os
 import re
 import time
 import difflib
@@ -17,6 +19,7 @@ import difflib
 from core.executor import Executor
 from core.planner import Planejador
 from core.agents import EquipeAgentes
+from core.security import Cofre, auditar_codigo, cifrar, decifrar
 
 
 # ---------------------- normalization / tokenization ----------------------
@@ -132,6 +135,7 @@ class Intencao:
     EXPORTAR = "exportar"
     QUEM_SOU = "quem_sou"
     FALAR = "falar"
+    SEGURANCA = "seguranca"
     EXECUTAR = "executar"
     DESCONHECIDO = "desconhecido"
 
@@ -169,39 +173,103 @@ def extrair_numero(token):
 
 
 def parse_math(texto):
-    """Tenta extrair uma operação matemática simples da frase.
-    Primeiro tenta detectar operadores no texto bruto (palavras como 'vezes'),
-    depois cai para o parsing por tokens."""
-    tudo = re.findall(r"\d+", texto)
-    tl = texto.lower()
-    operador_chave = None
-    for k, sym in (("vezes", "*"), ("multiplica", "*"), ("multiplicar", "*"),
-                   ("dividido", "/"), ("divide", "/"), ("dividir", "/"),
-                   ("menos", "-"), ("subtrai", "-"), ("mais", "+"),
-                   ("soma", "+")):
-        if k in tl:
-            operador_chave = sym
-            break
-    # forma explícita: 5 + 3
-    m = re.search(r"(\d+)\s*([+\-*x/])\s*(\d+)", texto)
-    if m:
-        return [float(m.group(1)), float(m.group(3))], [m.group(2)]
-    if operador_chave and len(tudo) >= 2:
-        return [float(x) for x in tudo], [operador_chave] * (len(tudo) - 1)
+    """Tenta transformar uma frase matemática numa expressão avaliável (string).
 
-    # parsing por tokens
-    limpo = palavras_limpas(texto)
-    numeros = []
-    ops = []
-    for t in limpo:
-        n = extrair_numero(t)
-        if n is not None:
-            numeros.append(n)
-        elif t in OPERADORES:
-            ops.append(OPERADORES[t])
-    if len(numeros) >= 2 and ops:
-        return numeros, ops
-    return None, None
+    Suporta: raiz quadrada ('raiz de', 'sqrt'), porcentagem ('%', 'porcento'),
+    e operadores (mais/+, menos/-, vezes/*, dividido por/, etc.).
+    Retorna (expressao_str, descricao) ou (None, None)."""
+    tl = texto.lower()
+
+    # raiz quadrada: 'raiz de 9', 'raiz quadrada de 9', 'sqrt(9)'
+    m_sqrt = re.search(r"ra[ií]z(?: quadrada)?\s*(?:de|quadrada de)\s*([\d.,]+)", tl)
+    if m_sqrt:
+        num = m_sqrt.group(1).replace(",", ".")
+        return "sqrt({})".format(num), "raiz quadrada de " + m_sqrt.group(1)
+
+    # normaliza palavras de operador para símbolos
+    expr = texto
+    expr = re.sub(r"\bmais\b", "+", expr, flags=re.IGNORECASE)
+    expr = re.sub(r"\bsoma\b", "+", expr, flags=re.IGNORECASE)
+    expr = re.sub(r"\bmenos\b", "-", expr, flags=re.IGNORECASE)
+    expr = re.sub(r"\bvezes\b", "*", expr, flags=re.IGNORECASE)
+    expr = re.sub(r"\bmultiplicad\w*\s+por\b", "*", expr, flags=re.IGNORECASE)
+    expr = re.sub(r"\bdiv[id]id\w*\s+por\b", "/", expr, flags=re.IGNORECASE)
+    expr = re.sub(r"\bporcent\w*\b", "%", expr, flags=re.IGNORECASE)
+    expr = re.sub(r"x(?=[\d\s])", "*", expr, flags=re.IGNORECASE)
+
+    # remove palavras que não são parte da expressão
+    expr = re.sub(r"quanto\s+e|quanto\s+eh|quanto|calcule|calcula|me\s+da|e\s+a\s+conta|conta\s+de",
+                  "", expr, flags=re.IGNORECASE)
+
+    # extrai números e operadores permitidos
+    expr_limpa = re.findall(r"[\d.,]+\s*[+\-*/%]?|\s*[+\-*/%]\s*", expr)
+    expr_str = "".join(e.strip() for e in expr_limpa).strip()
+
+    # valida se sobrou algo numérico-e-operadores
+    if not re.search(r"\d", expr_str):
+        return None, None
+    if re.search(r"[+\-*/%]{2,}", expr_str.replace("**", "")):
+        # operadores duplos inválidos (exceto ** que não usamos)
+        if not re.search(r"[+*]\s*-\s*\d", expr_str):
+            pass
+    # guarda contra letras/eval perigoso
+    if re.search(r"[a-zA-Z]", expr_str):
+        return None, None
+    return expr_str, expr_str
+
+
+def avaliar_math(expr):
+    """Avalia de forma segura uma expressão com + - * / % e sqrt().
+
+    Usa ast para construir uma árvore e avaliar apenas nós numéricos e
+    operadores permitidos — nunca eval() arbitrário."""
+    ops = {
+        ast.Add: lambda a, b: a + b,
+        ast.Sub: lambda a, b: a - b,
+        ast.Mult: lambda a, b: a * b,
+        ast.Div: lambda a, b: a / b,
+        ast.Mod: lambda a, b: a * (b / 100.0) if False else a % b,
+        ast.Pow: pow,
+    }
+    # substitui % no texto por mod para o parser, mas % nessse contexto é por cento
+    expr_mod = expr.replace("%", "%")
+    # expressões com % precisam de tratamento especial: numerador * denominador /100
+    if "%" in expr:
+        expr_mod = expr.replace("%", "/100")
+    tree = safe_parse(expr_mod)
+    if tree is None:
+        return None
+    return eval_node(tree.body, ops)
+
+
+def safe_parse(expr):
+    try:
+        return ast.parse(expr, mode="eval")
+    except Exception:
+        return None
+
+
+def eval_node(node, ops):
+    if isinstance(node, ast.Expression):
+        return eval_node(node.body, ops)
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        return float(node.value)
+    if isinstance(node, ast.BinOp) and type(node.op) in ops:
+        left = eval_node(node.left, ops)
+        right = eval_node(node.right, ops)
+        if left is None or right is None:
+            return None
+        if isinstance(node.op, ast.Div) and right == 0:
+            raise ZeroDivisionError
+        return ops[type(node.op)](left, right)
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        v = eval_node(node.operand, ops)
+        return -v if v is not None else None
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+            and node.func.id == "sqrt":
+        arg = eval_node(node.args[0], ops)
+        return math.sqrt(arg) if arg is not None and arg >= 0 else None
+    return None
 
 
 # ---------------------- conhecimento ----------------------
@@ -228,6 +296,7 @@ class NeoEngine:
         self.executor = Executor(platform)
         self.planejador = Planejador(memory, self.executor, platform)
         self.equipe = EquipeAgentes(memory)
+        self.cofre = Cofre(memory)
         self.aprovador = None  # callback(comando, explicacao, seguro) -> bool
 
     # ---- intenção ----
@@ -278,6 +347,13 @@ class NeoEngine:
                                 "qual e menor", "qual e melhor")):
             return Intencao.COMPARAR
 
+        # SEGURANCA: senhas/credenciais/criptografia/auditoria
+        if any(g in t for g in ("senha mestra", "credencia", "criptografia",
+                                "criptografa", "cofre", "guardar token",
+                                "auditar", "auditoria", "seguranca",
+                                "auto-melhoria", "auto melhorar")):
+            return Intencao.SEGURANCA
+
         # EXECUTAR: pedidos imperativos de ação no dispositivo
         # detecta abertura de apps do Android (ex: 'abre meu zap', 'roda o whatsapp')
         m_abre = re.match(r"^(abra|abre|roda|inicia|executa|execute)\s+(meu|me|o|a)\s+(\S+)",
@@ -298,8 +374,8 @@ class NeoEngine:
                                 "roda o python", "execute o")):
             return Intencao.EXECUTAR
 
-        nums, ops = parse_math(texto)
-        if nums is not None:
+        expr, desc = parse_math(texto)
+        if expr is not None:
             return Intencao.MATH
         if any(g in t for g in ("quanto e", "calcule", "matematica",
                                 "me da a conta")):
@@ -372,6 +448,8 @@ class NeoEngine:
             return self._conhecimento(texto)
         if intencao == Intencao.COMPARAR:
             return "Me diga o que quer comparar de forma explicita, ex: 'compare A e B'."
+        if intencao == Intencao.SEGURANCA:
+            return self._seguranca(texto)
         if intencao == Intencao.EXECUTAR:
             return self._lidar_execucao(texto)
         return self._desconhecido(texto)
@@ -582,27 +660,20 @@ class NeoEngine:
         return "\n".join(linhas)
 
     def _calcular(self, texto):
-        nums, ops = parse_math(texto)
-        if nums is None:
-            return "Nao consegui montar a conta. Ex: 'quanto e 5 + 3?'"
-        resultado = nums[0]
-        expressao = str(int(nums[0]) if float(nums[0]).is_integer() else nums[0])
-        for op, n in zip(ops, nums[1:]):
-            expressao += " {} {}".format(op,
-                int(n) if float(n).is_integer() else n)
-            if op == "+":
-                resultado += n
-            elif op == "-":
-                resultado -= n
-            elif op == "*":
-                resultado *= n
-            elif op == "/":
-                if n == 0:
-                    return "Nao posso dividir por zero!"
-                resultado /= n
+        expr, desc = parse_math(texto)
+        if expr is None:
+            return "Nao consegui montar a conta. Ex: 'quanto e 5 + 3?', 'raiz de 9'."
+        try:
+            resultado = avaliar_math(expr)
+        except ZeroDivisionError:
+            return "Nao posso dividir por zero!"
+        except Exception:
+            return "Nao consegui calcular '{}'. Tente ex: '5 + 3 * 2'.".format(texto)
+        if resultado is None:
+            return "Nao consegui calcular '{}'.".format(texto)
         if float(resultado).is_integer():
-            return "{} = {}".format(expressao, int(resultado))
-        return "{} = {:.2f}".format(expressao, resultado)
+            return "{} = {}".format(expr, int(resultado))
+        return "{} = {:.2f}".format(expr, resultado)
 
     def _conhecimento(self, texto):
         limpo = palavras_limpas(texto)
@@ -624,11 +695,91 @@ class NeoEngine:
             return melhor
         return None
 
+    def _seguranca(self, texto):
+        tl = remover_acentos(texto.lower())
+
+        # definir senha mestra
+        m = re.search(r"(?:defin[aei](?:r)?|mud[aei]|troc[aei]).{0,20}senha mestra\s+(.+)", texto, flags=re.IGNORECASE)
+        if not m:
+            m = re.search(r"senha mestra\s+(?:para\s+|de\s+)?(.+)", texto, flags=re.IGNORECASE)
+        if m:
+            senha = m.group(1).strip().strip(" !?.")
+            if len(senha) < 4:
+                return "A senha mestra precisa ter pelo menos 4 caracteres."
+            self.cofre.senha_mestra = senha
+            self.memory.add_fato("Usuario definiu senha mestra (criptografada, nunca em texto puro).")
+            return ("Senha mestra definida. Cuidado: perca a senha e as credenciais "
+                    "criptografadas ficam inacessiveis (nem eu consigo recuperar). "
+                    "Use-a para: 'guarde credencial github <valor>'.")
+
+        # guardar credencial
+        m = re.search(r"(?:guarde|guardar|salve|salvar|armazen[aei])\s+(?:a\s+)?credencial\s+([\w.\-]+)\s+(.+)", texto, flags=re.IGNORECASE)
+        if m:
+            servico = m.group(1).lower()
+            valor = m.group(2).strip().strip(" !?.")
+            ok, msg = self.cofre.guardar(servico, valor)
+            return "Criptografia: " + msg
+
+        # listar credenciais
+        if "list" in tl or "quais" in tl:
+            servicos = self.cofre.listar()
+            if servicos:
+                return "Cofre contem credenciais para: " + ", ".join(servicos) + \
+                       " (criptografadas). Nao revelo valores."
+            return "Cofre vazio. Guarde com: 'guarde credencial github <valor>'."
+
+        # revogar credencial
+        m = re.search(r"(?:revog[aei]r?|apag[aei]|remov[aei])\s+(?:a\s+)?credencial\s+([\w.\-]+)", texto, flags=re.IGNORECASE)
+        if m:
+            ok, msg = self.cofre.revogar(m.group(1))
+            return "Criptografia: " + msg
+
+        # auditar codigo / auto-melhoria
+        if "audit" in tl or "auto-melhoria" in tl or "auto melhoria" in tl:
+            if "auto" in tl:
+                return self._auto_melhoria()
+            avisos = auditar_codigo(self.platform.home)
+            if not avisos:
+                return "Auditoria concluida: nenhum segredo em texto puro encontrado."
+            return ("Auditoria concluida. {} possivei(s) segredo(s)/aviso(s):\n".format(len(avisos))
+                    + "\n".join(" - " + a for a in avisos[:10]))
+
+        if "criptograf" in tl:
+            return ("Tenho criptografia propria (XOR+rotacao com chave derivada de "
+                    "senha mestra via PBKDF2 caseiro + MAC de autenticacao). "
+                    "Credenciais ficam no cofre.json, nunca em texto puro. "
+                    "Honesto: criptografia caseira nao e TLS, mas ja e muito "
+                    "melhor que senha em texto puro.")
+
+        return ("Comandos de seguranca: 'defina senha mestra X', "
+                "'guarde credencial github <valor>', 'liste credenciais', "
+                "'revogue credencial github', 'auditar codigo', 'auto-melhoria'.")
+
+    def _auto_melhoria(self):
+        """Primeira versao de auto-melhoria: auditoria do proprio codigo +
+        verificacao de boas praticas, e guarda o resultado na memoria."""
+        base = os.path.dirname(os.path.abspath(__file__))
+        raiz = os.path.join(base, "..")
+        avisos = auditar_codigo(raiz)
+        relatorio = []
+        relatorio.append("Auto-melhoria (v1) - auditoria do proprio codigo:")
+        if avisos:
+            relatorio.append("- {} possivel(is) segredo(s) em texto puro.".format(len(avisos)))
+            for a in avisos[:8]:
+                relatorio.append("   * " + a)
+        else:
+            relatorio.append("- Nenhum segredo em texto puro.")
+        relatorio.append("- Sugestao: faca backups do vault, defina senha mestra,")
+        relatorio.append("  e mantenha o codigo atualizado (git pull).")
+        conteudo = "\n".join(relatorio)
+        self.memory.add_memoria("auto_melhoria_" + str(int(time.time())), conteudo)
+        return conteudo
+
     def _desconhecido(self, texto):
         # NeoAI pensa: consulta os 3 agentes, troca duvidas e pesquisa web.
         pen, resposta = self.equipe.pensar(texto)
         if resposta:
             return pen + "\n\n" + resposta
-        return ("Nao entendi de primeira nem meu time de 3 agentes soube, e a "
-                "internet nao respondeu (talvez offline). Digite 'ajuda' para ver "
-                "o que sei fazer.")
+        return ("Nao consegui entender ou nao encontrei resposta confiavel para "
+                "'{}' (e a busca na internet nao trouxe resultado).\n"
+                "Tente reformular, ou digite 'ajuda' para ver o que sei fazer.").format(texto)
