@@ -119,6 +119,16 @@ uma escolha de arquitetura (privacidade, tamanho, auditabilidade, zero custo).
   (`rotas.apps`, `rotas.sites`, `rotas.pastas` no cerebro).
 - Toda execucao bem-sucedida no dia a dia vira rota reutilizavel.
 
+### 2.11 `core/browser.py` - navegador (modo Playwright + modo leitura HTTP)
+- "Ver" pagina = LER conteudo (titulo, textos, links, botoes, campos) — nao e
+  visao por IA; prints servem para o usuario ver com os proprios olhos.
+- Com `playwright` instalado: abre chromium headless, le `domcontentloaded`,
+  rola a pagina, procura termos, tira prints em `memoria/screenshots/`.
+- Sem playwright: fallback HTTP puro (stdlib, html.parser) que descarta
+  script/style e extrai titulos/links/texto. Funciona em qualquer aparelho.
+- Comandos: `veja a pagina X`, `o que tem nessa pagina`, `procura na pagina X
+  por Y`, `tira um print da pagina X` (exige playwright).
+
 ## 3. O que vem a seguir (plano de evolucao)
 
 - [x] **Controle remoto notebook <-> celular** (hub HTTP com token + painel + takeover)

@@ -23,6 +23,7 @@ from core.agents import EquipeAgentes
 from core.security import Cofre, auditar_codigo, cifrar, decifrar
 from core import netctrl
 from core import mapper as mapper_mod
+from core.browser import Navegador, resumo_para_texto
 
 
 # ---------------------- normalization / tokenization ----------------------
@@ -144,6 +145,7 @@ class Intencao:
     SERVIR = "servir"
     BUSCAR = "buscar"
     GRAFO = "grafo"
+    VER_PAGINA = "ver_pagina"
     EXECUTAR = "executar"
     DESCONHECIDO = "desconhecido"
 
@@ -305,6 +307,7 @@ class NeoEngine:
         self.planejador = Planejador(memory, self.executor, platform)
         self.equipe = EquipeAgentes(memory)
         self.cofre = Cofre(memory)
+        self.navegador = Navegador()
         self.servidor = None
         self.modo_remoto = False  # True = comandos remotos so executam o seguro
         self.takeover = False     # True = mestre assumiu o controle manual
@@ -380,6 +383,21 @@ class NeoEngine:
                                 "conhecimento conectado", "gera o grafo",
                                 "atualiza o grafo")):
             return Intencao.GRAFO
+
+        # VER_PAGINA: navegador "ve" a pagina (conteudo, busca, print)
+        if any(g in t for g in ("veja a pagina", "ver a pagina",
+                                "veja o site", "ver o site",
+                                "o que tem nessa pagina", "o que tem nesta pagina",
+                                "o que diz nessa pagina", "me mostra o conteudo da pagina",
+                                "leia a pagina", "ler a pagina", "leia o site",
+                                "print da pagina", "print da tela",
+                                "screenshot da pagina", "tira um print",
+                                "procura na pagina", "procure na pagina",
+                                "pesquisa na pagina", "pesquise na pagina",
+                                "busca na pagina", "use o navegador",
+                                "abre o navegador", "navegador",
+                                "me conta o que tem em")):
+            return Intencao.VER_PAGINA
 
         # REMOTO: controlar/consultar o OUTRO aparelho (notebook <-> celular)
         if any(g in t for g in ("manda pro cel", "manda para o cel",
@@ -517,6 +535,8 @@ class NeoEngine:
             return self._buscar(texto)
         if intencao == Intencao.GRAFO:
             return self._grafo(texto)
+        if intencao == Intencao.VER_PAGINA:
+            return self._ver_pagina(texto)
         if intencao == Intencao.REMOTO:
             return self._remoto(texto)
         if intencao == Intencao.SERVIR:
@@ -643,6 +663,9 @@ class NeoEngine:
                 "- 'o que voce lembra?': listo memorias\n"
                 "- 'busca sobre X' / 'o que tenho sobre X': busco na memoria e no grafo\n"
                 "- 'grafo' / 'backlinks': mostro o grafo de conhecimento do Obsidian\n"
+                "- 'veja a pagina X': leio/descrevo o conteudo da pagina\n"
+                "- 'procura na pagina X por Y': procuro um termo na pagina\n"
+                "- 'tira um print da pagina X': print (veja com seus olhos)\n"
                 "- 'esqueça ...' / 'apague ...': apago\n"
                 "- 'exportar': gero backup da memoria\n"
                 "- 'quanto e 5 + 3?': matematicas\n"
@@ -901,14 +924,70 @@ class NeoEngine:
             refs = self.memory.backlinks(m.group(1).strip())
         header = ("Grafo de conhecimento atualizado no Obsidian.\n"
                   "Nos (notas): {} | Arestas (links): {}\n"
-                  "Arquivos: {}\\{}, {}\\{}\nVejas a aba Grafos do Obsidian.".format(
-                      nos, arestas, self.memory.vault_dir,
-                      "NeoAI - Grafo de Conhecimento.md", self.memory.vault_dir,
-                      "grafo.json"))
+                  "Arquivos: {} e {}\nVejas a aba Grafos do Obsidian.".format(
+                      nos, arestas,
+                      os.path.join(self.memory.vault_dir,
+                                   "NeoAI - Grafo de Conhecimento.md"),
+                      os.path.join(self.memory.vault_dir, "grafo.json")))
         if refs:
             header += "\nBacklinks de '{}': {}".format(m.group(1).strip(),
                                                        ", ".join(refs) or "nenhum")
         return header
+
+    # ---- navegador: ver/ler paginas ----
+
+    def _extrair_url(self, texto):
+        m = re.search(r"(?:https?://)?([a-zA-Z0-9][a-zA-Z0-9.\-]{1,}\.[a-zA-Z]{2,}(?:/\S*)?)",
+                      texto)
+        return m.group(0) if m else None
+
+    def _ver_pagina(self, texto):
+        tl = texto.lower()
+
+        # 1) print (print da pagina/tela) - exige Playwright
+        if any(g in tl for g in ("print da pagina", "print da tela",
+                                 "screenshot", "tira um print", "print de",
+                                 "foto da pagina", "fotografa")):
+            url = self._extrair_url(texto) or self.navegador.ultima_url
+            if not url:
+                return "De qual pagina? Ex: 'tira um print da pagina gmail.com'."
+            if self.navegador.modo != "playwright":
+                return ("Print so e possivel com Playwright (Chromium). "
+                        "Instale: pip install playwright && python3 -m "
+                        "playwright install chromium. Enquanto isso, eu posso "
+                        "LER a pagina (modo leitura HTTP).")
+            destino = os.path.join(self.memory.export_dir(), "screenshots",
+                                   "print_" + str(int(time.time())) + ".png")
+            caminho, erro = self.navegador.screenshot(url, destino)
+            if erro is not None and erro:
+                return str(erro)
+            if caminho:
+                self.memory.add_memoria("print_" + str(int(time.time())),
+                                        "Print: " + url)
+                return "Print salvo em: " + caminho + " (abra e veja)."
+            return "Nao consegui tirar o print."
+
+        # 2) procurar termo dentro da pagina
+        m_termo = re.search(r"(?:procura|procure|pesquisa|pesquise|busca|busque)"
+                            r".*\bpor\s+(.+)", texto, flags=re.IGNORECASE)
+        if m_termo and "na pagina" in tl:
+            url = self._extrair_url(texto) or self.navegador.ultima_url
+            if not url:
+                return "De qual pagina? Ex: 'procura na pagina gmail.com por login'."
+            return self.navegador.procurar(url, m_termo.group(1).strip())
+
+        # 3) ler/descrever a pagina
+        url = (self._extrair_url(texto)
+               or self.navegador.ultima_url)
+        if not url:
+            return ("Qual pagina quer que eu veja? Ex: 'veja a pagina "
+                    "https://exemplo.com' ou 'o que tem nessa pagina'.")
+        rolar = "rol" in tl
+        dados = self.navegador.ler(url, rolar=rolar)
+        if not dados.get("erro"):
+            self._aprender_rota_site(
+                url.replace("https://", "").replace("http://", ""))
+        return resumo_para_texto(dados)
 
     def _mapear(self, texto):
         if any(g in texto for g in ("rotas", "aprendeu", "resumo")):

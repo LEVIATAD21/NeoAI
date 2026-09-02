@@ -22,6 +22,13 @@ Roda em **Linux, Windows e Termux (Android, sem root)**.
   roda scripts Python/Shell, instala pacotes, mostra informações do sistema.
 - **Abre apps do Android e sites**: via Termux (`am start`, `termux-open-url`) e
   aprende a rota de cada um para reusar depois.
+- **"Vê" páginas da web**: `veja a pagina X` lê e descreve o conteúdo (título,
+  textos, links, títulos, campos); `procura na pagina X por Y` acha termos; e
+  `tira um print da pagina X` salva uma captura de tela para você conferir.
+  - Com **Playwright** (chromium) instalado: lê páginas renderizadas com JS,
+    rola e tira prints de verdade.
+  - Sem Playwright: abre modo de leitura HTTP (padrão, funciona em qualquer
+    aparelho) — lê o conteúdo estático.
 - **Conhece o aparelho de ponta a ponta**: mapeia apps, pastas e rotas do dia a
   dia e guarda tudo na memória (`conhece meu celular`, `quais rotas`).
 - **Controle remoto notebook <-> celular**: um aparelho expõe uma porta (servidor
@@ -55,6 +62,21 @@ cd NeoAI
 python3 neoai.py
 ```
 
+## Visualizar páginas (opcional — Playwright)
+O modo leitura HTTP funciona em qualquer lugar. Para ver páginas renderizadas e tirar prints:
+
+**Linux / Windows**
+```bash
+pip install playwright
+python3 -m playwright install chromium
+```
+
+**Termux (Android)**
+```bash
+pkg install python-pip && pip install playwright && python3 -m playwright install chromium
+```
+(No Termux também vale instalar o navegador do sistema com `pkg install chromium`.)
+
 ## Comandos que a NeoAI entende
 
 | Você digita | O que ela faz |
@@ -71,6 +93,9 @@ python3 neoai.py
 | `abre o arquivo X` | Mostra o conteúdo |
 | `abre o whatsapp` / `roda o telegram` | Abre app Android (Termux) |
 | `abre o site gmail.com` | Abre o site no navegador e aprende a rota |
+| `veja a pagina X` | Lê e descreve o conteúdo da página |
+| `procura na pagina X por Y` | Procura um termo dentro da página |
+| `tira um print da pagina X` | Captura de tela (requer Playwright) |
 | `instala Y` | Instala o pacote |
 | `informações do sistema` | Detalhes do hardware |
 | `conhece meu celular` / `quais rotas` | Mapeia o dispositivo e mostra o que sabe |
