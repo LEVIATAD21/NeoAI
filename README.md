@@ -56,11 +56,33 @@ termux-setup-storage    # permitir acesso ao storage (para Obsidian/Downloads)
 Requer apenas `python3` (biblioteca padrão, sem dependências externas).
 
 ## Como rodar
+> **Instalação única**: o comando abaixo baixa o repositório E já baixa
+> tudo de que a NeoAI precisa (Playwright + Chromium), de uma vez só.
+
+**Linux / Termux / macOS**
 ```bash
-git clone <URL-do-repositorio>.git
-cd NeoAI
-python3 neoai.py
+curl -fsSL https://raw.githubusercontent.com/LEVIATAD21/NeoAI/main/bootstrap.sh | sh
 ```
+
+Ou, se preferir clonar manualmente:
+```bash
+git clone https://github.com/LEVIATAD21/NeoAI.git NeoAI
+cd NeoAI
+python3 instala.py        # baixa Playwright + Chromium (uma única execução)
+python3 neoai.py          # roda a NeoAI
+```
+
+**Windows**
+```powershell
+git clone https://github.com/LEVIATAD21/NeoAI.git NeoAI
+cd NeoAI
+py -3 instala.py
+py -3 neoai.py
+```
+
+Se o Playwright falhar de instalar (ex.: Python novo sem wheel), sem problema:
+a NeoAI continua **funcionando em modo leitura HTTP** e você pode rodar
+`python3 instala.py` de novo depois.
 
 ## Visualizar páginas (opcional — Playwright)
 O modo leitura HTTP funciona em qualquer lugar. Para ver páginas renderizadas e tirar prints:
